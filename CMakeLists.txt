@@ -44,9 +44,11 @@ if(ENABLE_TSAN)
 endif()
 
 # ============================================================================
-# OpenMP
+# OpenMP (disable when using Thread Sanitizer - TSan doesn't understand OpenMP)
 # ============================================================================
-if(ENABLE_OPENMP)
+if(ENABLE_TSAN)
+  message(STATUS "OpenMP: disabled (incompatible with ThreadSanitizer)")
+elseif(ENABLE_OPENMP)
   find_package(OpenMP)
   if(OpenMP_CXX_FOUND)
     message(STATUS "OpenMP: enabled")
