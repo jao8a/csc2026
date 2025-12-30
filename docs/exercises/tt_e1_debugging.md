@@ -18,3 +18,8 @@ cmake --build build-asan -j"$(nproc)"
 ctest --test-dir build-asan --output-on-failure
 
 ./build-asan/analyze
+```
+
+## Stretch
+* Make ThreadSanitizer clean (if applicable)
+* Add a second test to cover an edge case
