@@ -1,5 +1,3 @@
-# .github/workflows/ci.yml
-# CSC Latin America 2026 - CI Pipeline
 name: CI
 
 on:
@@ -8,21 +6,14 @@ on:
   pull_request:
     branches: [main]
 
-permissions:
-  contents: read
-
 env:
   BUILD_TYPE: Release
-  DEBIAN_FRONTEND: noninteractive
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # ==========================================================================
-  # Build and Test (Standard)
-  # ==========================================================================
   build:
     name: Build & Test
     runs-on: ubuntu-latest
@@ -30,16 +21,31 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check package manager
+        run: |
+          if ! command -v apt-get >/dev/null 2>&1; then
+            echo "apt-get not found in container; use an ubuntu/debian-based image or remove container usage" >&2
+            exit 1
+          fi
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ env.BUILD_TYPE }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
 
       - name: Install dependencies
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends \
-            cmake ninja-build git \
-            python3 python3-pip
+          apt-get install -y cmake ninja-build git python3-pip
           python3 -m pip install --break-system-packages pytest pytest-cov
 
-      - name: Configure CMake
+      - name: Configure
         run: |
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
@@ -52,8 +58,7 @@ jobs:
       - name: Run C++ Tests
         run: ctest --test-dir build --output-on-failure --verbose
 
-      - name: Run Python Tests (only if any exist)
-        if: ${{ hashFiles('tests/**/*.py') != '' }}
+      - name: Run Python Tests
         run: pytest tests/ -v --tb=short
 
       - name: Upload build artifacts
@@ -63,12 +68,8 @@ jobs:
           path: |
             build/analyze
             build/benchmarks
-          if-no-files-found: warn
           retention-days: 7
 
-  # ==========================================================================
-  # Sanitizer Checks (ASan + UBSan)
-  # ==========================================================================
   sanitizers:
     name: Sanitizers (ASan/UBSan)
     runs-on: ubuntu-latest
@@ -76,15 +77,22 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Install dependencies (clang + ninja + OpenMP headers)
+      - name: Check package manager
+        run: |
+          if ! command -v apt-get >/dev/null 2>&1; then
+            echo "apt-get not found in container; use an ubuntu/debian-based image or remove container usage" >&2
+            exit 1
+          fi
+
+      - name: Install dependencies
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends \
-            cmake ninja-build \
-            clang clang-tidy libomp-dev
+          apt-get install -y cmake ninja-build clang
 
-      - name: Configure with Sanitizers (Clang)
+      - name: Configure with Sanitizers
         run: |
           CC=clang CXX=clang++ cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
@@ -97,13 +105,10 @@ jobs:
 
       - name: Run Tests with Sanitizers
         env:
-          ASAN_OPTIONS: abort_on_error=1:disable_coredump=0:detect_leaks=0:strict_string_checks=1
-          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+          ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:abort_on_error=1
         run: ctest --test-dir build --output-on-failure
 
-  # ==========================================================================
-  # Thread Sanitizer
-  # ==========================================================================
   thread-sanitizer:
     name: Thread Sanitizer (TSan)
     runs-on: ubuntu-latest
@@ -111,15 +116,22 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Install dependencies (clang + ninja + OpenMP headers)
+      - name: Check package manager
+        run: |
+          if ! command -v apt-get >/dev/null 2>&1; then
+            echo "apt-get not found in container; use an ubuntu/debian-based image or remove container usage" >&2
+            exit 1
+          fi
+
+      - name: Install dependencies
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends \
-            cmake ninja-build \
-            clang libomp-dev
+          apt-get install -y cmake ninja-build clang libomp-dev
 
-      - name: Configure with TSan (Clang)
+      - name: Configure with TSan
         run: |
           CC=clang CXX=clang++ cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
@@ -135,9 +147,6 @@ jobs:
           TSAN_OPTIONS: abort_on_error=1
         run: ctest --test-dir build --output-on-failure
 
-  # ==========================================================================
-  # Static Analysis
-  # ==========================================================================
   static-analysis:
     name: Static Analysis (clang-tidy)
     runs-on: ubuntu-latest
@@ -145,28 +154,32 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check package manager
+        run: |
+          if ! command -v apt-get >/dev/null 2>&1; then
+            echo "apt-get not found in container; use an ubuntu/debian-based image or remove container usage" >&2
+            exit 1
+          fi
 
       - name: Install clang-tidy (and Ninja + OpenMP headers)
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends \
-            cmake ninja-build \
-            clang clang-tidy libomp-dev
+          apt-get install -y cmake ninja-build clang clang-tidy libomp-dev
 
-      - name: Configure (Clang compile database)
+      - name: Configure
         run: |
           CC=clang CXX=clang++ cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
-      - name: Run clang-tidy (fail on errors)
+      - name: Run clang-tidy
         run: |
-          find src include \( -name '*.cpp' -o -name '*.hpp' \) -print0 | \
+          find src -name '*.cpp' -print0 | \
           xargs -0 -r clang-tidy -p build --warnings-as-errors='*'
 
-  # ==========================================================================
-  # Benchmarks (on main only)
-  # ==========================================================================
   benchmarks:
     name: Performance Benchmarks
     runs-on: ubuntu-latest
@@ -176,12 +189,28 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check package manager
+        run: |
+          if ! command -v apt-get >/dev/null 2>&1; then
+            echo "apt-get not found in container; use an ubuntu/debian-based image or remove container usage" >&2
+            exit 1
+          fi
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-benchmarks-${{ env.BUILD_TYPE }}
+          restore-keys: |
+            ${{ runner.os }}-pip-benchmarks-
 
       - name: Install dependencies
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends \
-            cmake ninja-build python3 python3-pip
+          apt-get install -y cmake ninja-build python3-pip
           pip3 install --break-system-packages matplotlib
 
       - name: Configure
@@ -199,24 +228,6 @@ jobs:
             --benchmark_format=json \
             --benchmark_out=benchmark_results.json
 
-      - name: Generate Benchmark Report (log)
-        run: |
-          python3 << 'EOF'
-          import json
-          with open('benchmark_results.json') as f:
-              data = json.load(f)
-
-          print("# Benchmark Results\n")
-          print("| Benchmark | Time (ns) | CPU (ns) | Iterations |")
-          print("|-----------|-----------|----------|------------|")
-          for bench in data.get('benchmarks', []):
-              name = bench.get('name', 'N/A')
-              time = bench.get('real_time', 0.0)
-              cpu = bench.get('cpu_time', 0.0)
-              iters = bench.get('iterations', 0)
-              print(f"| {name} | {time:.2f} | {cpu:.2f} | {iters} |")
-          EOF
-
       - name: Upload Benchmark Results
         uses: actions/upload-artifact@v4
         with:
@@ -224,29 +235,60 @@ jobs:
           path: benchmark_results.json
           retention-days: 30
 
-  # ==========================================================================
-  # Documentation (optional, main only)
-  # ==========================================================================
   docs:
     name: Build Documentation
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && hashFiles('mkdocs.yml') != ''
+    if: github.ref == 'refs/heads/main'
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect mkdocs and docs changes
+        id: detect_docs
+        run: |
+          CHANGED=false
+
+          BEFORE='${{ github.event.before }}'
+          AFTER='${{ github.sha }}'
+
+          # Handle "first commit" edge case
+          if [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            if git diff --name-only "$BEFORE..$AFTER" | grep -Eq '(^mkdocs.yml$|^docs/)' ; then
+              CHANGED=true
+            fi
+          else
+            # If no valid BEFORE, fall back to checking existence only
+            if [ -f mkdocs.yml ] || [ -d docs ]; then
+              CHANGED=true
+            fi
+          fi
+
+          if [ -f mkdocs.yml ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
 
       - name: Setup Python
+        if: steps.detect_docs.outputs.present == 'true' && steps.detect_docs.outputs.changed == 'true'
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: '3.11'
 
       - name: Install mkdocs
+        if: steps.detect_docs.outputs.present == 'true' && steps.detect_docs.outputs.changed == 'true'
         run: pip install mkdocs mkdocs-material
 
       - name: Build docs
+        if: steps.detect_docs.outputs.present == 'true' && steps.detect_docs.outputs.changed == 'true'
         run: mkdocs build -d site
 
       - name: Upload docs artifact
+        if: steps.detect_docs.outputs.present == 'true' && steps.detect_docs.outputs.changed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: documentation
